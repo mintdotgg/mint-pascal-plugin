@@ -25,6 +25,18 @@ export class MintPluginApiError extends Error {
   }
 }
 
+const RECONCILABLE_OPTIMIZATION_PROBLEMS = [
+  'model-already-optimized',
+  'model-optimization-in-progress',
+] as const
+
+export function isMintOptimizationConflict(error: unknown) {
+  if (!(error instanceof MintPluginApiError) || error.status !== 409) return false
+  return RECONCILABLE_OPTIMIZATION_PROBLEMS.some((problem) =>
+    error.problemType === problem || error.problemType?.endsWith(`/${problem}`),
+  )
+}
+
 export type MintApiResult<T> = { data: T; retryAfterMs: number | null }
 
 function retryAfterMs(value: string | null) {

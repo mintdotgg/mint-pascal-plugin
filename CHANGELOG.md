@@ -4,6 +4,14 @@ User-facing changes for each public `@mint/pascal-plugin` release are recorded h
 
 <!-- releases -->
 
+## 0.1.3 - 2026-08-04
+
+### Reliable optimized placement
+
+- Refreshes completed model state before placement so auto-optimized models add directly without duplicate work.
+- Reconciles concurrent or already-completed optimizations instead of showing a false failure.
+- Presents a shorter public README with a centered plugin preview and clear integration path.
+
 ## 0.1.2 - 2026-08-04
 
 ### Make host setup production-safe

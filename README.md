@@ -1,23 +1,24 @@
 # Mint for Pascal
 
-`@mint/pascal-plugin` connects a user's Mint account to Pascal Editor. The panel can browse succeeded Mint 3D models, generate from prompts, uploads, or public image URLs, optimize new models automatically, and place optimized GLBs through Pascal's native item tool. Existing unoptimized models are optimized on demand before placement.
+<p align="center">
+  <img src="./src/assets/mint-pascal-hero.jpg" alt="Mint for Pascal" width="640">
+</p>
 
-## Exports
+Generate, browse, and add Mint 3D assets in Pascal Editor.
 
-```ts
-import { mintHostPanel, mintPlugin } from '@mint/pascal-plugin'
-import { handleMintPascalRequest } from '@mint/pascal-plugin/server'
-```
+## What you can do
 
-- `mintPlugin`: Pascal Plugin API v1 manifest, ID `mint:assets`, with no custom scene nodes.
-- `mintHostPanel`: disabled-by-default `Mint` editor panel.
-- `handleMintPascalRequest(request)`: framework-neutral handler for the one host route at `/api/plugins/mint/[...path]`.
-- `mintModelToAsset` and `armMintAssetForPlacement`: native Pascal asset mapping and placement helpers.
+- Sign in with your Mint account.
+- Browse your Mint 3D asset library.
+- Generate models from a prompt or reference image.
+- Optimize models and add them to your Pascal scene.
 
-The current package targets Pascal Plugin API v1. Its primary development
-baseline is Pascal `1.0.0-beta.1`, with compatibility retained for `0.9.2`.
+## Add Mint to Pascal
 
-See [HOST_INTEGRATION.md](./HOST_INTEGRATION.md) for the host changes and local test procedure.
+Pascal maintainers can follow the [integration guide](./HOST_INTEGRATION.md) to
+install the plugin and connect it to the editor.
+
+Supports Pascal `1.0.0-beta.1` and `0.9.2`.
 
 ## Development
 
@@ -27,8 +28,8 @@ pnpm --filter @mint/pascal-plugin type-check
 pnpm --filter @mint/pascal-plugin test
 ```
 
-The package is MIT licensed.
-
 ## Releases
 
-The panel displays its exact package version beside the Mint title for support diagnostics. See [CHANGELOG.md](./CHANGELOG.md) for the user-facing changes in each release.
+See the [changelog](./CHANGELOG.md) for each version's updates.
+
+MIT licensed.

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { pollMintOperation } from './polling'
-import type { MintOperation } from './types'
+import { pollMintModelUntilOptimized, pollMintOperation } from './polling'
+import type { MintOperation, MintPluginModel } from './types'
 
 function operation(
   status: MintOperation['status'],
@@ -58,5 +58,30 @@ describe('operation polling', () => {
     expect(result.status).toBe('preview_ready')
     expect(get).toHaveBeenCalledTimes(1)
     expect(sleep).not.toHaveBeenCalled()
+  })
+})
+
+describe('model optimization reconciliation', () => {
+  it('waits for a concurrent optimization to publish the optimized GLB', async () => {
+    const unoptimized = {
+      object: 'model',
+      id: 'model_1',
+      status: 'succeeded',
+      assets: { optimizedGlbUrl: null },
+    } as MintPluginModel
+    const optimized = {
+      ...unoptimized,
+      assets: { optimizedGlbUrl: 'https://cdn.mint.gg/model_1-optimized.glb' },
+    } as MintPluginModel
+    const get = vi.fn()
+      .mockResolvedValueOnce(unoptimized)
+      .mockResolvedValueOnce(optimized)
+    const sleep = vi.fn(async (_milliseconds: number) => {})
+
+    await expect(
+      pollMintModelUntilOptimized('model_1', get, { sleep }),
+    ).resolves.toEqual(optimized)
+    expect(get).toHaveBeenCalledTimes(2)
+    expect(sleep).toHaveBeenCalledOnce()
   })
 })

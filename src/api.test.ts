@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { uploadReferenceImage } from './api'
+import {
+  isMintOptimizationConflict,
+  MintPluginApiError,
+  uploadReferenceImage,
+} from './api'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -28,5 +32,25 @@ describe('Pascal plugin API client', () => {
     const headers = new Headers(init?.headers)
     expect(headers.get('idempotency-key')).toBe('pascal-reference-url-test')
     expect(headers.get('content-type')).toBe('application/json')
+  })
+
+  it('recognizes optimization conflicts that should be reconciled from model state', () => {
+    const response = new Response(null, { status: 409 })
+
+    expect(isMintOptimizationConflict(new MintPluginApiError(
+      'Already optimized',
+      response,
+      'https://api.mint.gg/problems/model-already-optimized',
+    ))).toBe(true)
+    expect(isMintOptimizationConflict(new MintPluginApiError(
+      'Still optimizing',
+      response,
+      'model-optimization-in-progress',
+    ))).toBe(true)
+    expect(isMintOptimizationConflict(new MintPluginApiError(
+      'Different conflict',
+      response,
+      'idempotency-conflict',
+    ))).toBe(false)
   })
 })

@@ -1,6 +1,6 @@
 import type { MintApiResult } from './api'
-import type { MintOperation } from './types'
-import { operationIsAwaitingReview } from './types'
+import type { MintOperation, MintPluginModel } from './types'
+import { modelIsOptimized, operationIsAwaitingReview } from './types'
 
 const TERMINAL_STATUSES = new Set([
   'billing_required',
@@ -51,6 +51,34 @@ export async function pollMintOperation(
     }
     const waitMs = Math.min(maxDelayMs, result.retryAfterMs ?? delayMs)
     await sleep(waitMs, options.signal)
+    delayMs = Math.min(maxDelayMs, Math.ceil(delayMs * multiplier))
+  }
+}
+
+export async function pollMintModelUntilOptimized(
+  modelId: string,
+  getModel: (modelId: string) => Promise<MintPluginModel>,
+  options: Pick<
+    PollOperationOptions,
+    'signal' | 'initialDelayMs' | 'multiplier' | 'maxDelayMs' | 'timeoutMs' | 'now' | 'sleep'
+  > = {},
+) {
+  const now = options.now ?? Date.now
+  const timeoutMs = options.timeoutMs ?? 30 * 60 * 1_000
+  const multiplier = options.multiplier ?? 1.6
+  const maxDelayMs = options.maxDelayMs ?? 15_000
+  const sleep = options.sleep ?? sleepWithSignal
+  const startedAt = now()
+  let delayMs = options.initialDelayMs ?? 1_000
+
+  for (;;) {
+    if (options.signal?.aborted) throw abortError()
+    const model = await getModel(modelId)
+    if (modelIsOptimized(model)) return model
+    if (now() - startedAt >= timeoutMs) {
+      throw new Error('Mint optimization is still running. Try adding the model again shortly.')
+    }
+    await sleep(delayMs, options.signal)
     delayMs = Math.min(maxDelayMs, Math.ceil(delayMs * multiplier))
   }
 }

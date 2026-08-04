@@ -10,6 +10,7 @@ import {
   getMintModel,
   getMintOperation,
   getMintSession,
+  isMintOptimizationConflict,
   listMintModels,
   logoutMint,
   MintPluginApiError,
@@ -26,7 +27,11 @@ import MINT_PLUGIN_HERO from './assets/mint-pascal-hero.jpg'
 import { MINT_THUMBNAIL_FALLBACK } from './mapping'
 import { inspectGlb, measureGlbBounds, type GlbMetrics } from './measure-bounds'
 import { armMintAssetForPlacement } from './placement'
-import { operationNeedsPolling, pollMintOperation } from './polling'
+import {
+  operationNeedsPolling,
+  pollMintModelUntilOptimized,
+  pollMintOperation,
+} from './polling'
 import { MINT_PASCAL_PLUGIN_VERSION } from './version'
 import type {
   GlbBounds,
@@ -472,41 +477,66 @@ export default function MintAssetsPanel() {
     setPlacingModelId(model.id)
     setError(null)
     try {
-      if (!modelIsPlaceable(model)) {
-        throw new Error('This model does not have a placement-ready GLB.')
-      }
-
-      if (!modelIsOptimized(model)) {
-        setPlacementProgress({ modelId: model.id, modelName, phase: 'optimizing' })
-        optimizationStarted = true
-        setOperationBusy(true)
-        const completed = await watchOperation(
-          await optimizeMintModel(model.id, newIdempotencyKey('optimize-after-place')),
-        )
-        if (completed.status === 'billing_required') {
-          setPlacementProgress({
-            modelId: model.id,
-            modelName,
-            phase: 'no_credits',
-          })
-          rememberOperation(null)
-          setOperation(null)
-          return
-        }
-        if (completed.status !== 'succeeded' && completed.status !== 'partially_succeeded') {
-          throw new Error(completed.error?.message ?? 'Mint could not optimize this model.')
-        }
-
+      if (!modelIsOptimized(modelToPlace)) {
         const refreshed = await getMintModel(model.id)
-        if (!modelIsOptimized(refreshed)) {
-          throw new Error('Mint finished optimization without returning an optimized GLB.')
-        }
         setModels((current) =>
           current.map((currentModel) =>
             currentModel.id === refreshed.id ? refreshed : currentModel,
           ),
         )
         modelToPlace = refreshed
+      }
+
+      if (!modelIsPlaceable(modelToPlace)) {
+        throw new Error('This model does not have a placement-ready GLB.')
+      }
+
+      if (!modelIsOptimized(modelToPlace)) {
+        setPlacementProgress({ modelId: model.id, modelName, phase: 'optimizing' })
+        optimizationStarted = true
+        setOperationBusy(true)
+        let completed: MintOperation | null = null
+        try {
+          completed = await watchOperation(
+            await optimizeMintModel(model.id, newIdempotencyKey('optimize-after-place')),
+          )
+        } catch (optimizationError) {
+          if (!isMintOptimizationConflict(optimizationError)) throw optimizationError
+          const reconciled = await pollMintModelUntilOptimized(model.id, getMintModel)
+          modelToPlace = reconciled
+        }
+        if (!completed) {
+          setModels((current) =>
+            current.map((currentModel) =>
+              currentModel.id === modelToPlace.id ? modelToPlace : currentModel,
+            ),
+          )
+        } else {
+          if (completed.status === 'billing_required') {
+            setPlacementProgress({
+              modelId: model.id,
+              modelName,
+              phase: 'no_credits',
+            })
+            rememberOperation(null)
+            setOperation(null)
+            return
+          }
+          if (completed.status !== 'succeeded' && completed.status !== 'partially_succeeded') {
+            throw new Error(completed.error?.message ?? 'Mint could not optimize this model.')
+          }
+
+          const refreshed = await getMintModel(model.id)
+          if (!modelIsOptimized(refreshed)) {
+            throw new Error('Mint finished optimization without returning an optimized GLB.')
+          }
+          setModels((current) =>
+            current.map((currentModel) =>
+              currentModel.id === refreshed.id ? refreshed : currentModel,
+            ),
+          )
+          modelToPlace = refreshed
+        }
         rememberOperation(null)
         setOperation(null)
       }
@@ -614,13 +644,11 @@ export default function MintAssetsPanel() {
   async function openCreatedModel(modelId: string) {
     setError(null)
     try {
-      if (!models.some((model) => model.id === modelId)) {
-        const model = await getMintModel(modelId)
-        setModels((current) => [
-          model,
-          ...current.filter((candidate) => candidate.id !== model.id),
-        ])
-      }
+      const model = await getMintModel(modelId)
+      setModels((current) => [
+        model,
+        ...current.filter((candidate) => candidate.id !== model.id),
+      ])
       clearCompletedCreateTasks()
       setSelectedModelId(modelId)
       setTab('assets')
