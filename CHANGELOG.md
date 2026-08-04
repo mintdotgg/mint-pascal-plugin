@@ -4,6 +4,14 @@ User-facing changes for each public `@mint/pascal-plugin` release are recorded h
 
 <!-- releases -->
 
+## 0.1.5 - 2026-08-04
+
+### Harden Pascal host authentication
+
+- Uses a configured Pascal origin for OAuth redirects, mutation checks, and secure cookies instead of forwarded request headers.
+- Fails closed when the host does not provide a trusted origin.
+- Adds verified compatibility with Pascal 1.0.0-beta.4 and a bounded prerelease peer range.
+
 ## 0.1.4 - 2026-08-04
 
 ### Support Pascal 1.0.0-beta.3

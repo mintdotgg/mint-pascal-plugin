@@ -6,18 +6,17 @@ build, and mount one route.
 
 ## 1. Pin the approved release
 
-Use the exact tag or commit supplied by Mint:
+Use the exact commit supplied by Mint:
 
 ```json
 {
   "dependencies": {
-    "@mint/pascal-plugin": "github:mintdotgg/mint-pascal-plugin#v<version>"
+    "@mint/pascal-plugin": "github:mintdotgg/mint-pascal-plugin#<40-character-commit-sha>"
   }
 }
 ```
 
-Commit the resulting `bun.lock` change. Do not track `main` or an unpinned
-release.
+Commit the resulting `bun.lock` change. Do not track `main` or a mutable tag.
 
 ## 2. Register Mint before bootstrap
 
@@ -54,11 +53,13 @@ Create `/api/plugins/mint/[...path]`:
 
 ```ts
 import { handleMintPascalRequest } from '@mint/pascal-plugin/server'
+import { BASE_URL } from '@/lib/utils'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-const route = (request: Request) => handleMintPascalRequest(request)
+const route = (request: Request) =>
+  handleMintPascalRequest(request, { origin: BASE_URL })
 
 export { route as GET, route as POST }
 ```
@@ -71,7 +72,9 @@ The adapter uses these public Mint endpoints by default:
 
 Pascal needs no Mint secret, token database, session-encryption key, or custom
 auth framework. Tokens stay in host-only HttpOnly cookies and are never
-returned to browser JavaScript.
+returned to browser JavaScript. The configured `BASE_URL` is the trusted origin
+for OAuth callbacks, mutation checks, and secure cookies; forwarded request
+headers are not trusted.
 
 ## 5. Send callback URLs to Mint
 

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { handleMintPascalRequest } from './index'
+import { handleMintPascalRequest, type MintPascalServerOptions } from './index'
 
 type HeadersWithCookies = Headers & { getSetCookie: () => string[] }
 const setCookies = (response: Response) => (response.headers as HeadersWithCookies).getSetCookie()
@@ -8,13 +8,29 @@ const cookieValue = (response: Response, name: string) => {
   const entry = setCookies(response).find((value) => value.startsWith(`${name}=`))
   return entry ? decodeURIComponent(entry.split(';')[0]!.slice(name.length + 1)) : null
 }
+const HOST_ORIGIN = 'https://editor.pascal.app'
+const handleRequest = (request: Request, options: MintPascalServerOptions = {}) =>
+  handleMintPascalRequest(request, { origin: HOST_ORIGIN, ...options })
 
 afterEach(() => vi.unstubAllEnvs())
 
 describe('Pascal OAuth server adapter', () => {
-  it('uses public Mint defaults for loopback hosts unless endpoints are configured', async () => {
+  it('fails closed when the trusted Pascal origin is not configured', async () => {
     const response = await handleMintPascalRequest(
+      new Request('https://editor.pascal.app/api/plugins/mint/oauth/start'),
+    )
+
+    expect(response.status).toBe(502)
+    expect(await response.json()).toEqual({
+      error: 'mint_unavailable',
+      detail: 'Mint is temporarily unavailable.',
+    })
+  })
+
+  it('uses public Mint defaults for loopback hosts unless endpoints are configured', async () => {
+    const response = await handleRequest(
       new Request('http://localhost:3002/api/plugins/mint/oauth/start'),
+      { origin: 'http://localhost:3002' },
     )
     const redirect = new URL(response.headers.get('location')!)
     expect(redirect.origin).toBe('https://mcp.mint.gg')
@@ -26,8 +42,9 @@ describe('Pascal OAuth server adapter', () => {
     vi.stubEnv('MINT_PASCAL_API_RESOURCE', 'https://api.internal.example')
     vi.stubEnv('MINT_PASCAL_API_BASE', 'https://api.internal.example/v1')
 
-    const start = await handleMintPascalRequest(
+    const start = await handleRequest(
       new Request('http://localhost:3002/api/plugins/mint/oauth/start'),
+      { origin: 'http://localhost:3002' },
     )
     const redirect = new URL(start.headers.get('location')!)
     expect(redirect.origin).toBe('https://oauth.internal.example')
@@ -39,11 +56,11 @@ describe('Pascal OAuth server adapter', () => {
         owner: { userId: '0xabc', email: null },
       }),
     )
-    await handleMintPascalRequest(
+    await handleRequest(
       new Request('http://localhost:3002/api/plugins/mint/session', {
         headers: { Cookie: 'mint_pascal_access=access-token' },
       }),
-      { fetch: fetchMock },
+      { origin: 'http://localhost:3002', fetch: fetchMock },
     )
     expect(fetchMock).toHaveBeenCalledWith(
       'https://api.internal.example/v1/me',
@@ -52,7 +69,7 @@ describe('Pascal OAuth server adapter', () => {
   })
 
   it('starts resource-bound PKCE with both asset scopes and no secret', async () => {
-    const response = await handleMintPascalRequest(
+    const response = await handleRequest(
       new Request('https://editor.pascal.app/api/plugins/mint/oauth/start?returnTo=%2Fproject%2F123'),
     )
     expect(response.status).toBe(302)
@@ -67,8 +84,25 @@ describe('Pascal OAuth server adapter', () => {
     expect(setCookies(response).every((value) => value.includes('HttpOnly') && value.includes('Secure'))).toBe(true)
   })
 
+  it('ignores forwarded headers when building OAuth redirects and cookies', async () => {
+    const response = await handleRequest(
+      new Request('https://editor.pascal.app/api/plugins/mint/oauth/start', {
+        headers: {
+          'x-forwarded-host': 'attacker.example',
+          'x-forwarded-proto': 'http',
+        },
+      }),
+    )
+
+    const redirect = new URL(response.headers.get('location')!)
+    expect(redirect.searchParams.get('redirect_uri')).toBe(
+      'https://editor.pascal.app/api/plugins/mint/oauth/callback',
+    )
+    expect(setCookies(response).every((value) => value.includes('Secure'))).toBe(true)
+  })
+
   it('exchanges the callback and stores tokens only in HttpOnly cookies', async () => {
-    const start = await handleMintPascalRequest(
+    const start = await handleRequest(
       new Request('https://editor.pascal.app/api/plugins/mint/oauth/start?returnTo=%2Fproject%2F123'),
     )
     const state = cookieValue(start, 'mint_pascal_state')
@@ -79,7 +113,7 @@ describe('Pascal OAuth server adapter', () => {
       expect(body.get('code_verifier')).toBeTruthy()
       return Response.json({ access_token: 'access-token', refresh_token: 'refresh-token', expires_in: 3600, token_type: 'Bearer', scope: 'mint:assets:read mint:assets:generate' })
     })
-    const response = await handleMintPascalRequest(
+    const response = await handleRequest(
       new Request(`https://editor.pascal.app/api/plugins/mint/oauth/callback?code=code-1&state=${state}`, { headers: { Cookie: cookieHeader(start) } }),
       { fetch: fetchMock as typeof fetch },
     )
@@ -90,9 +124,9 @@ describe('Pascal OAuth server adapter', () => {
   })
 
   it('rejects mismatched state before exchange', async () => {
-    const start = await handleMintPascalRequest(new Request('https://editor.pascal.app/api/plugins/mint/oauth/start'))
+    const start = await handleRequest(new Request('https://editor.pascal.app/api/plugins/mint/oauth/start'))
     const fetchMock = vi.fn<typeof fetch>()
-    const response = await handleMintPascalRequest(
+    const response = await handleRequest(
       new Request('https://editor.pascal.app/api/plugins/mint/oauth/callback?code=code-1&state=wrong', { headers: { Cookie: cookieHeader(start) } }),
       { fetch: fetchMock },
     )
@@ -105,7 +139,7 @@ describe('Pascal OAuth server adapter', () => {
       .fn<typeof fetch>()
       .mockResolvedValueOnce(Response.json({ access_token: 'new-access', refresh_token: 'new-refresh', expires_in: 3600, token_type: 'Bearer', scope: 'mint:assets:read mint:assets:generate' }))
       .mockResolvedValueOnce(Response.json({ authentication: { type: 'oauth', scopes: ['mint:assets:read', 'mint:assets:generate'] }, owner: { userId: '0xabc', email: null } }))
-    const response = await handleMintPascalRequest(
+    const response = await handleRequest(
       new Request('https://editor.pascal.app/api/plugins/mint/session', { headers: { Cookie: 'mint_pascal_refresh=old-refresh' } }),
       { fetch: fetchMock },
     )
@@ -121,7 +155,7 @@ describe('Pascal OAuth server adapter', () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       Response.json({ error: 'unavailable' }, { status: 503 }),
     )
-    const response = await handleMintPascalRequest(
+    const response = await handleRequest(
       new Request('https://editor.pascal.app/api/plugins/mint/session', {
         headers: { Cookie: 'mint_pascal_access=access-token' },
       }),
@@ -138,12 +172,12 @@ describe('Pascal OAuth server adapter', () => {
 
   it('enforces origin and a fixed upstream route allowlist', async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ object: 'operation' }))
-    const rejectedOrigin = await handleMintPascalRequest(
+    const rejectedOrigin = await handleRequest(
       new Request('https://editor.pascal.app/api/plugins/mint/api/models:generate', { method: 'POST', headers: { Origin: 'https://attacker.example', Cookie: 'mint_pascal_access=token' }, body: '{}' }),
       { fetch: fetchMock },
     )
     expect(rejectedOrigin.status).toBe(403)
-    const rejectedPath = await handleMintPascalRequest(
+    const rejectedPath = await handleRequest(
       new Request('https://editor.pascal.app/api/plugins/mint/api/assets/asset_1', { headers: { Cookie: 'mint_pascal_access=token' } }),
       { fetch: fetchMock },
     )
@@ -151,9 +185,29 @@ describe('Pascal OAuth server adapter', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  it('rejects forged origins even when forwarded headers match them', async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+    const response = await handleRequest(
+      new Request('https://editor.pascal.app/api/plugins/mint/api/models:generate', {
+        method: 'POST',
+        headers: {
+          Origin: 'https://attacker.example',
+          'x-forwarded-host': 'attacker.example',
+          'x-forwarded-proto': 'https',
+          Cookie: 'mint_pascal_access=token',
+        },
+        body: '{}',
+      }),
+      { fetch: fetchMock },
+    )
+
+    expect(response.status).toBe(403)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('proxies allowed generation with only safe headers', async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ object: 'operation', id: 'op_1' }, { status: 202 }))
-    const response = await handleMintPascalRequest(
+    const response = await handleRequest(
       new Request('https://editor.pascal.app/api/plugins/mint/api/models:generate', {
         method: 'POST',
         headers: { Origin: 'https://editor.pascal.app', Cookie: 'mint_pascal_access=token', 'Idempotency-Key': 'stable-key', 'X-Secret': 'nope', 'Content-Type': 'application/json' },
@@ -171,7 +225,7 @@ describe('Pascal OAuth server adapter', () => {
 
   it('revokes same-origin logout and clears both session cookies', async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json({}))
-    const response = await handleMintPascalRequest(
+    const response = await handleRequest(
       new Request('https://editor.pascal.app/api/plugins/mint/logout', { method: 'POST', headers: { Origin: 'https://editor.pascal.app', Cookie: 'mint_pascal_refresh=refresh-token' }, body: '{}' }),
       { fetch: fetchMock },
     )

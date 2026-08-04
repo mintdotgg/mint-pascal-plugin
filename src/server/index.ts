@@ -18,6 +18,7 @@ type TokenResponse = {
 }
 
 export type MintPascalServerOptions = {
+  origin?: string
   clientId?: string
   oauthIssuer?: string
   oauthResource?: string
@@ -31,16 +32,25 @@ function randomToken(bytes = 32) {
   return randomBytes(bytes).toString('base64url')
 }
 
-function requestOrigin(request: Request) {
-  const requestUrl = new URL(request.url)
-  const forwardedHost = request.headers.get('x-forwarded-host')?.split(',')[0]?.trim()
-  const forwardedProto = request.headers.get('x-forwarded-proto')?.split(',')[0]?.trim()
-  if (!forwardedHost) return requestUrl.origin
-  return `${forwardedProto === 'http' ? 'http' : 'https'}://${forwardedHost}`
+function configuredOrigin(value: string | undefined) {
+  if (!value) throw new Error('Mint Pascal host origin is not configured.')
+  const url = new URL(value)
+  if (
+    (url.protocol !== 'http:' && url.protocol !== 'https:') ||
+    url.username ||
+    url.password ||
+    url.pathname !== '/' ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error('Mint Pascal host origin must be an HTTP(S) origin without a path.')
+  }
+  return url.origin
 }
 
 function resolveOptions(options: MintPascalServerOptions): ResolvedOptions {
   return {
+    origin: configuredOrigin(options.origin ?? process.env.MINT_PASCAL_HOST_ORIGIN),
     clientId: options.clientId ?? DEFAULT_CLIENT_ID,
     oauthIssuer:
       options.oauthIssuer ??
@@ -87,12 +97,12 @@ function cookie(name: string, value: string, input: { maxAge: number; secure: bo
     .join('; ')
 }
 
-function secureCookies(request: Request) {
-  return new URL(requestOrigin(request)).protocol === 'https:'
+function secureCookies(options: ResolvedOptions) {
+  return new URL(options.origin).protocol === 'https:'
 }
 
-function tokenCookies(request: Request, tokens: TokenResponse) {
-  const secure = secureCookies(request)
+function tokenCookies(options: ResolvedOptions, tokens: TokenResponse) {
+  const secure = secureCookies(options)
   return [
     cookie(ACCESS_COOKIE, tokens.access_token, {
       maxAge: Math.max(1, Math.floor(tokens.expires_in)),
@@ -102,8 +112,11 @@ function tokenCookies(request: Request, tokens: TokenResponse) {
   ]
 }
 
-function temporaryCookies(request: Request, input: { state: string; verifier: string; returnTo: string }) {
-  const secure = secureCookies(request)
+function temporaryCookies(
+  options: ResolvedOptions,
+  input: { state: string; verifier: string; returnTo: string },
+) {
+  const secure = secureCookies(options)
   return [
     cookie(STATE_COOKIE, input.state, { maxAge: 600, secure }),
     cookie(VERIFIER_COOKIE, input.verifier, { maxAge: 600, secure }),
@@ -111,8 +124,8 @@ function temporaryCookies(request: Request, input: { state: string; verifier: st
   ]
 }
 
-function clearCookies(request: Request, names = [ACCESS_COOKIE, REFRESH_COOKIE]) {
-  const secure = secureCookies(request)
+function clearCookies(options: ResolvedOptions, names = [ACCESS_COOKIE, REFRESH_COOKIE]) {
+  const secure = secureCookies(options)
   return names.map((name) => cookie(name, '', { maxAge: 0, secure }))
 }
 
@@ -145,8 +158,8 @@ function safeReturnPath(value: string | null) {
   }
 }
 
-function callbackUrl(request: Request) {
-  return `${requestOrigin(request)}${COOKIE_PATH}/oauth/callback`
+function callbackUrl(options: ResolvedOptions) {
+  return `${options.origin}${COOKIE_PATH}/oauth/callback`
 }
 
 function sameSecret(left: string, right: string) {
@@ -155,9 +168,9 @@ function sameSecret(left: string, right: string) {
   return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes)
 }
 
-function sameOrigin(request: Request) {
+function sameOrigin(request: Request, options: ResolvedOptions) {
   const origin = request.headers.get('origin')
-  return origin !== null && origin === requestOrigin(request)
+  return origin !== null && origin === options.origin
 }
 
 function tokenEndpoint(options: ResolvedOptions) {
@@ -168,18 +181,13 @@ function revokeEndpoint(options: ResolvedOptions) {
   return `${options.oauthIssuer.replace(/\/$/, '')}/oauth/revoke`
 }
 
-async function exchangeCode(
-  request: Request,
-  options: ResolvedOptions,
-  code: string,
-  verifier: string,
-) {
+async function exchangeCode(options: ResolvedOptions, code: string, verifier: string) {
   const body = new URLSearchParams({
     grant_type: 'authorization_code',
     client_id: options.clientId,
     code,
     code_verifier: verifier,
-    redirect_uri: callbackUrl(request),
+    redirect_uri: callbackUrl(options),
     resource: options.oauthResource,
   })
   const response = await options.fetch(tokenEndpoint(options), {
@@ -191,7 +199,7 @@ async function exchangeCode(
   return (await response.json()) as TokenResponse
 }
 
-async function refreshTokens(request: Request, options: ResolvedOptions, refreshToken: string) {
+async function refreshTokens(options: ResolvedOptions, refreshToken: string) {
   const response = await options.fetch(tokenEndpoint(options), {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -204,7 +212,7 @@ async function refreshTokens(request: Request, options: ResolvedOptions, refresh
   })
   if (!response.ok) return null
   const tokens = (await response.json()) as TokenResponse
-  return { accessToken: tokens.access_token, cookies: tokenCookies(request, tokens) }
+  return { accessToken: tokens.access_token, cookies: tokenCookies(options, tokens) }
 }
 
 async function startAuthorization(request: Request, options: ResolvedOptions) {
@@ -216,7 +224,7 @@ async function startAuthorization(request: Request, options: ResolvedOptions) {
   const authorize = new URL('/oauth/authorize', options.oauthIssuer)
   authorize.searchParams.set('response_type', 'code')
   authorize.searchParams.set('client_id', options.clientId)
-  authorize.searchParams.set('redirect_uri', callbackUrl(request))
+  authorize.searchParams.set('redirect_uri', callbackUrl(options))
   authorize.searchParams.set('scope', DEFAULT_SCOPES.join(' '))
   authorize.searchParams.set('resource', options.oauthResource)
   authorize.searchParams.set('state', state)
@@ -224,7 +232,7 @@ async function startAuthorization(request: Request, options: ResolvedOptions) {
   authorize.searchParams.set('code_challenge_method', 'S256')
   return responseWithCookies(
     Response.redirect(authorize, 302),
-    temporaryCookies(request, { state, verifier, returnTo }),
+    temporaryCookies(options, { state, verifier, returnTo }),
   )
 }
 
@@ -248,22 +256,22 @@ async function finishAuthorization(request: Request, options: ResolvedOptions) {
     return json(
       { error: 'invalid_oauth_callback', detail: 'Mint sign-in could not be verified.' },
       400,
-      clearCookies(request, temporaryNames),
+      clearCookies(options, temporaryNames),
     )
   }
 
   try {
-    const tokens = await exchangeCode(request, options, code, verifier)
-    const redirect = Response.redirect(new URL(returnTo, requestOrigin(request)), 303)
+    const tokens = await exchangeCode(options, code, verifier)
+    const redirect = Response.redirect(new URL(returnTo, options.origin), 303)
     return responseWithCookies(redirect, [
-      ...tokenCookies(request, tokens),
-      ...clearCookies(request, temporaryNames),
+      ...tokenCookies(options, tokens),
+      ...clearCookies(options, temporaryNames),
     ])
   } catch {
     return json(
       { error: 'oauth_exchange_failed', detail: 'Mint sign-in could not be completed.' },
       502,
-      clearCookies(request, [...temporaryNames, ACCESS_COOKIE, REFRESH_COOKIE]),
+      clearCookies(options, [...temporaryNames, ACCESS_COOKIE, REFRESH_COOKIE]),
     )
   }
 }
@@ -284,8 +292,8 @@ async function authenticatedApiFetch(
   let accessToken = values.get(ACCESS_COOKIE)
   let rotatedCookies: string[] = []
   if (!accessToken && refreshToken) {
-    const refreshed = await refreshTokens(request, options, refreshToken)
-    if (!refreshed) return { response: null, cookies: clearCookies(request) }
+    const refreshed = await refreshTokens(options, refreshToken)
+    if (!refreshed) return { response: null, cookies: clearCookies(options) }
     accessToken = refreshed.accessToken
     rotatedCookies = refreshed.cookies
   }
@@ -298,8 +306,8 @@ async function authenticatedApiFetch(
     })
   let response = await execute(accessToken)
   if (response.status === 401 && refreshToken) {
-    const refreshed = await refreshTokens(request, options, refreshToken)
-    if (!refreshed) return { response: null, cookies: clearCookies(request) }
+    const refreshed = await refreshTokens(options, refreshToken)
+    if (!refreshed) return { response: null, cookies: clearCookies(options) }
     rotatedCookies = refreshed.cookies
     response = await execute(refreshed.accessToken)
   }
@@ -317,7 +325,7 @@ async function proxyApi(request: Request, options: ResolvedOptions, path: string
   if (!allowedApiPath(request.method, path)) {
     return json({ error: 'not_found', detail: 'This Mint plugin API route is not available.' }, 404)
   }
-  if (request.method === 'POST' && !sameOrigin(request)) {
+  if (request.method === 'POST' && !sameOrigin(request, options)) {
     return json({ error: 'origin_mismatch', detail: 'The request origin was not accepted.' }, 403)
   }
 
@@ -362,7 +370,7 @@ async function session(request: Request, options: ResolvedOptions) {
   if (!upstream.response) return json({ connected: false }, 200, upstream.cookies)
   if (!upstream.response.ok) {
     if (upstream.response.status === 401) {
-      return json({ connected: false }, 200, clearCookies(request))
+      return json({ connected: false }, 200, clearCookies(options))
     }
     return json(
       { error: 'mint_unavailable', detail: 'Mint could not verify the current session.' },
@@ -374,7 +382,7 @@ async function session(request: Request, options: ResolvedOptions) {
     authentication?: { scopes?: string[] }
     owner?: { userId?: string; email?: string | null }
   }
-  if (!account.owner?.userId) return json({ connected: false }, 200, clearCookies(request))
+  if (!account.owner?.userId) return json({ connected: false }, 200, clearCookies(options))
   return json(
     {
       connected: true,
@@ -387,7 +395,7 @@ async function session(request: Request, options: ResolvedOptions) {
 }
 
 async function logout(request: Request, options: ResolvedOptions) {
-  if (!sameOrigin(request)) {
+  if (!sameOrigin(request, options)) {
     return json({ error: 'origin_mismatch', detail: 'The request origin was not accepted.' }, 403)
   }
   const refreshToken = parseCookies(request).get(REFRESH_COOKIE)
@@ -405,7 +413,7 @@ async function logout(request: Request, options: ResolvedOptions) {
       })
       .catch(() => null)
   }
-  return json({}, 200, clearCookies(request))
+  return json({}, 200, clearCookies(options))
 }
 
 function routePath(request: Request) {
@@ -419,9 +427,9 @@ export async function handleMintPascalRequest(
   request: Request,
   serverOptions: MintPascalServerOptions = {},
 ) {
-  const options = resolveOptions(serverOptions)
-  const path = routePath(request)
   try {
+    const options = resolveOptions(serverOptions)
+    const path = routePath(request)
     if (request.method === 'GET' && path === 'oauth/start') return await startAuthorization(request, options)
     if (request.method === 'GET' && path === 'oauth/callback') {
       return await finishAuthorization(request, options)
