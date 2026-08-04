@@ -1,6 +1,6 @@
 // @pascal-app/editor publishes source, so importing it into this standalone
 // package would type-check the entire editor. Mirror only the public surface
-// shared by Pascal 0.9.2 and 1.0.0-beta.1; the compatibility gate checks both
+// shared by Pascal 0.9.2, 1.0.0-beta.1, and 1.0.0-beta.3; the gate checks all
 // real packages and consumers still resolve their installed peer package.
 declare module '@pascal-app/editor' {
   export type EditorHostPanel = {

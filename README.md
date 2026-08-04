@@ -18,7 +18,7 @@ Generate, browse, and add Mint 3D assets in Pascal Editor.
 Pascal maintainers can follow the [integration guide](./HOST_INTEGRATION.md) to
 install the plugin and connect it to the editor.
 
-Supports Pascal `1.0.0-beta.1` and `0.9.2`.
+Supports Pascal `1.0.0-beta.3`, `1.0.0-beta.1`, and `0.9.2`.
 
 ## Development
 

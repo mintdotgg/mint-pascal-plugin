@@ -4,6 +4,12 @@ User-facing changes for each public `@mint/pascal-plugin` release are recorded h
 
 <!-- releases -->
 
+## 0.1.4 - 2026-08-04
+
+### Support Pascal 1.0.0-beta.3
+
+- Adds verified compatibility with Pascal 1.0.0-beta.3 while retaining 1.0.0-beta.1 and 0.9.2 support.
+
 ## 0.1.3 - 2026-08-04
 
 ### Reliable optimized placement

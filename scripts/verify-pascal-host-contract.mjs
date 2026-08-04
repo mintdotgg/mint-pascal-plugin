@@ -21,6 +21,13 @@ const versions = [
     editor: '@pascal-app/editor',
     viewer: '@pascal-app/viewer',
   },
+  {
+    label: 'Pascal 1.0.0-beta.3',
+    expectedVersion: '1.0.0-beta.3',
+    core: '@mint/pascal-core-1-0-0-beta-3',
+    editor: '@mint/pascal-editor-1-0-0-beta-3',
+    viewer: '@mint/pascal-viewer-1-0-0-beta-3',
+  },
 ]
 
 function dependencyPath(packageName, ...segments) {
