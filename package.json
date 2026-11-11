@@ -10,6 +10,10 @@
       "types": "./src/index.ts",
       "default": "./src/index.ts"
     },
+    "./render": {
+      "types": "./src/render.ts",
+      "default": "./src/render.ts"
+    },
     "./server": {
       "types": "./src/server/index.ts",
       "default": "./src/server/index.ts"
@@ -28,6 +32,7 @@
   "scripts": {
     "compatibility": "node scripts/verify-pascal-host-contract.mjs && tsc --noEmit --project tsconfig.compatibility.json",
     "type-check": "tsc --noEmit",
+    "check:render": "node scripts/check-render-entry.ts",
     "test": "vitest run --config vitest.config.ts"
   },
   "peerDependencies": {
@@ -53,6 +58,7 @@
     "@types/node": "^22.19.12",
     "@types/react": "^19.2.2",
     "@types/three": "0.185.0",
+    "esbuild": "^0.28.2",
     "react": "^19",
     "three": "0.185.0",
     "typescript": "^5",
